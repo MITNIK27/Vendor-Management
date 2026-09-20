@@ -123,6 +123,21 @@ function getRecordAtRow(sheetName, rowNumber) {
 }
 
 /**
+ * Builds one row of cell values from a record, in header order, sanitized
+ * against formula injection. Shared by appendRecord and appendRecords so
+ * both stay consistent.
+ * @param {Array<string>} headers
+ * @param {Object} record
+ * @return {Array<*>}
+ * @private
+ */
+function buildRow_(headers, record) {
+  return headers.map(function (h) {
+    return sanitizeCellValue_(record[h] !== undefined ? record[h] : '');
+  });
+}
+
+/**
  * Appends a new record. Fields not present in the record are left blank.
  * Fields present in the record but not in the sheet's headers are ignored.
  * String values are sanitized against formula injection.
@@ -133,11 +148,26 @@ function getRecordAtRow(sheetName, rowNumber) {
 function appendRecord(sheetName, record) {
   var sheet = getSpreadsheet_().getSheetByName(sheetName);
   var headers = getHeaders(sheetName);
-  var row = headers.map(function (h) {
-    return sanitizeCellValue_(record[h] !== undefined ? record[h] : '');
-  });
-  sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row]);
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([buildRow_(headers, record)]);
   return sheet.getLastRow();
+}
+
+/**
+ * Appends many records in a single write — use this instead of calling
+ * appendRecord in a loop whenever writing more than a couple of rows
+ * (e.g. bulk mock-data generation, or a future real-data import); it's
+ * the same per-row shape as appendRecord, just issued as one Sheets API
+ * call instead of one per row.
+ * @param {string} sheetName
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function appendRecords(sheetName, records) {
+  if (!records || records.length === 0) return;
+  var sheet = getSpreadsheet_().getSheetByName(sheetName);
+  var headers = getHeaders(sheetName);
+  var rows = records.map(function (record) { return buildRow_(headers, record); });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
 }
 
 /**
@@ -198,13 +228,20 @@ function updateRecord(sheetName, predicateFn, updates) {
 }
 
 /**
- * Deletes every data row below the header, leaving the header row intact.
- * Used by MockData.gs to regenerate mock data idempotently.
+ * Clears every data row below the header (content only, not the rows
+ * themselves), leaving the header row and the sheet's row count intact.
+ * Used by MockData.gs to regenerate mock data idempotently. Deliberately
+ * uses clearContent rather than deleteRows: deleteRows can fail with
+ * "Sorry, it is not possible to delete all non-frozen rows" when a
+ * sheet's grid happens to have no spare rows below its data (so deleting
+ * every data row would delete every non-frozen row in the whole sheet) —
+ * clearing content instead sidesteps that Sheets-level restriction
+ * entirely, since the row structure never changes.
  * @param {string} sheetName
  * @return {void}
  */
 function clearSheetRows(sheetName) {
   var sheet = getSpreadsheet_().getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < 2) return;
-  sheet.deleteRows(2, sheet.getLastRow() - 1);
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getMaxColumns()).clearContent();
 }

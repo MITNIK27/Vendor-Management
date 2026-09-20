@@ -49,6 +49,16 @@ function createContract(record) {
 }
 
 /**
+ * Appends many contract records in a single write — use for bulk loading
+ * instead of calling createContract in a loop.
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function createContracts(records) {
+  appendRecords(CONTRACT_SOW_SHEET, records);
+}
+
+/**
  * Merges updates into the contract record with the given Contract ID.
  * @param {string} contractId
  * @param {Object} updates

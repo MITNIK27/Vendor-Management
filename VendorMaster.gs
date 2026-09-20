@@ -52,6 +52,17 @@ function createVendor(record) {
 }
 
 /**
+ * Appends many vendor records in a single write — use for bulk loading
+ * (mock data generation, or a future real-data import) instead of calling
+ * createVendor in a loop.
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function createVendors(records) {
+  appendRecords(VENDOR_MASTER_SHEET, records);
+}
+
+/**
  * Merges updates into the vendor record with the given Vendor ID.
  * @param {string} vendorId
  * @param {Object} updates

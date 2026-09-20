@@ -63,6 +63,16 @@ function createResource(record) {
 }
 
 /**
+ * Appends many resource records in a single write — use for bulk loading
+ * instead of calling createResource in a loop.
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function createResources(records) {
+  appendRecords(RESOURCE_MASTER_SHEET, records);
+}
+
+/**
  * Merges updates into the resource record with the given Resource ID.
  * @param {string} resourceId
  * @param {Object} updates

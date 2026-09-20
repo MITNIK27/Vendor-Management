@@ -46,3 +46,13 @@ function getPerformanceByVendor(vendorId) {
 function createPerformanceRecord(record) {
   return appendRecord(PERFORMANCE_SHEET, record);
 }
+
+/**
+ * Appends many performance records in a single write — use for bulk
+ * loading instead of calling createPerformanceRecord in a loop.
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function createPerformanceRecords(records) {
+  appendRecords(PERFORMANCE_SHEET, records);
+}

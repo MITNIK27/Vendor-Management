@@ -44,3 +44,13 @@ function getSavingsByVendor(vendorId) {
 function createSavingsRecord(record) {
   return appendRecord(SAVINGS_SHEET, record);
 }
+
+/**
+ * Appends many savings records in a single write — use for bulk loading
+ * instead of calling createSavingsRecord in a loop.
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function createSavingsRecords(records) {
+  appendRecords(SAVINGS_SHEET, records);
+}

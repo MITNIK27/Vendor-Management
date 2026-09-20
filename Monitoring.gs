@@ -150,7 +150,7 @@ function processMilestones_(today, counters) {
           DMName: getDeliveryManagerNameByEmail(r['Delivery Manager Email']),
           CandidateName: r['Candidate Name'], ResourceId: r['Resource ID'],
           Milestone: hit.milestone + '-month', ClientName: r['Client'],
-          FormLink: '(Phase 3 form link placeholder)'
+          FormLink: buildReviewFormLink(r['Resource ID'], hit.type.replace('Review ', ''))
         },
         hit.type + ' for ' + r['Resource ID'], r['Resource ID']
       );

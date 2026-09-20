@@ -47,6 +47,16 @@ function createInvoice(record) {
 }
 
 /**
+ * Appends many invoice records in a single write — use for bulk loading
+ * instead of calling createInvoice in a loop.
+ * @param {Array<Object>} records
+ * @return {void}
+ */
+function createInvoices(records) {
+  appendRecords(INVOICES_SHEET, records);
+}
+
+/**
  * Merges updates into the invoice record with the given Invoice ID.
  * @param {string} invoiceId
  * @param {Object} updates

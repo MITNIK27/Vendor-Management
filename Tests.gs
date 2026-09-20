@@ -267,6 +267,99 @@ function test_dryRunDoesNotActuallySend() {
 }
 
 /**
+ * Verifies the review Form's questions exactly match REVIEW_FORM_QUESTIONS
+ * — fails loudly if the Form's shape ever drifts from what
+ * processFormResponse_ expects, per the user's explicit concern that the
+ * Form must not "go haywire."
+ * @return {boolean}
+ */
+function test_formStructureMatchesSchema() {
+  var form = ensureReviewForm();
+  var actualTitles = form.getItems().map(function (i) { return i.getTitle(); });
+  var expectedTitles = REVIEW_FORM_QUESTIONS.map(function (q) { return q.title; });
+  return assertTest_(JSON.stringify(actualTitles) === JSON.stringify(expectedTitles), 'Review Form questions match the expected schema exactly');
+}
+
+/**
+ * Verifies a normal (short-term) form response updates Review Responses,
+ * marks the resource's milestone Review Status Completed, and closes the
+ * Action Log entry that prompted it.
+ * @return {boolean}
+ */
+function test_processFormResponseUpdatesReviewResponsesAndClosesAction() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  var beforeCount = getAllRecords(REVIEW_RESPONSES_SHEET).length;
+  processFormResponse_({
+    'Resource ID': 'RES-0001', 'Milestone': '3M', 'Current Requirement': 'Yes, ongoing',
+    'Expected Duration': 'Short-term (under 3 months)', 'Business Dependency': 'Medium',
+    'Internal Replacement Possible': 'No', 'Cross-Training Opportunity': 'Yes',
+    'FTE Conversion Potential': 'No', 'Replacement Timeline': 'Not applicable', 'Comments': 'Test'
+  });
+  var allPass = true;
+  allPass = assertTest_(getAllRecords(REVIEW_RESPONSES_SHEET).length === beforeCount + 1, 'A new Review Responses row was added') && allPass;
+  var r = getResourceById('RES-0001');
+  allPass = assertTest_(r['3M Review Status'] === 'Completed', 'RES-0001 3M Review Status is now Completed') && allPass;
+  allPass = assertTest_(!hasOpenAction('Resource ID', 'RES-0001', 'Review 3M'), 'RES-0001 Review 3M action is closed') && allPass;
+  return allPass;
+}
+
+/**
+ * Verifies a long-term response opens a new FTE/Cross-Train Evaluation
+ * action for Akanksha — the "surface it to a human, don't decide for
+ * them" behavior CLAUDE.md calls for.
+ * @return {boolean}
+ */
+function test_longTermResponseCreatesFteEvaluationAction() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  processFormResponse_({
+    'Resource ID': 'RES-0002', 'Milestone': '6M', 'Current Requirement': 'Yes',
+    'Expected Duration': 'Long-term (6+ months)', 'Business Dependency': 'High',
+    'Internal Replacement Possible': 'Unsure', 'Cross-Training Opportunity': 'Yes',
+    'FTE Conversion Potential': 'Yes', 'Replacement Timeline': 'Immediate', 'Comments': ''
+  });
+  return assertTest_(hasOpenAction('Resource ID', 'RES-0002', 'FTE/Cross-Train Evaluation'), 'Long-term response created an open FTE/Cross-Train Evaluation action');
+}
+
+/**
+ * Negative case for the above: a short-term response must not create an
+ * FTE/Cross-Train Evaluation action.
+ * @return {boolean}
+ */
+function test_shortTermResponseDoesNotCreateFteEvaluationAction() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  processFormResponse_({
+    'Resource ID': 'RES-0003', 'Milestone': '9M', 'Current Requirement': 'Yes',
+    'Expected Duration': 'Short-term (under 3 months)', 'Business Dependency': 'Low',
+    'Internal Replacement Possible': 'Yes', 'Cross-Training Opportunity': 'No',
+    'FTE Conversion Potential': 'No', 'Replacement Timeline': '1-3 months', 'Comments': ''
+  });
+  return assertTest_(!hasOpenAction('Resource ID', 'RES-0003', 'FTE/Cross-Train Evaluation'), 'Short-term response did not create an FTE/Cross-Train Evaluation action');
+}
+
+/**
+ * Verifies an unknown Resource ID (a DM typo) is handled gracefully: a
+ * Warning row lands in Failures and processFormResponse_ doesn't throw.
+ * @return {boolean}
+ */
+function test_unknownResourceIdLogsFailureGracefully() {
+  setupPhase1WithDate_(new Date());
+  processFormResponse_({ 'Resource ID': 'RES-9999', 'Milestone': '3M' });
+  var failureRows = findRecords(FAILURES_SHEET, function (r) { return r['Entity ID'] === 'RES-9999'; });
+  var allPass = true;
+  allPass = assertTest_(failureRows.length > 0, 'Unknown Resource ID logged a Failures row') && allPass;
+  if (failureRows.length > 0) {
+    allPass = assertTest_(failureRows[0].Severity === 'Warning', 'Unknown Resource ID Failures row is Warning severity') && allPass;
+  }
+  return allPass;
+}
+
+/**
  * Runs setupPhase1 with a given "today" without re-seeding Config every
  * time (seedConfig() is idempotent via setConfigValue's upsert, so this
  * just calls setupPhase1 directly). Wrapper kept separate so tests read
@@ -326,4 +419,30 @@ function runAllPhase2Tests() {
     if (t()) passed++;
   });
   console.log(passed + '/' + tests.length + ' Phase 2 test functions passed.');
+}
+
+/**
+ * Runs every Phase 3 test function and logs a pass/fail summary. Does NOT
+ * include ensureFormSubmitTrigger's idempotency or a real end-to-end form
+ * submission — same reasoning as Phase 2's trigger exclusion: a real
+ * trigger install is a side effect, and FormResponse.submit() isn't
+ * reliably synchronous with an installed trigger within one test run.
+ * processFormResponse_ being pure and directly testable is what makes the
+ * real logic verifiable without a live trigger fire.
+ * @return {void}
+ */
+function runAllPhase3Tests() {
+  var tests = [
+    test_formStructureMatchesSchema,
+    test_processFormResponseUpdatesReviewResponsesAndClosesAction,
+    test_longTermResponseCreatesFteEvaluationAction,
+    test_shortTermResponseDoesNotCreateFteEvaluationAction,
+    test_unknownResourceIdLogsFailureGracefully
+  ];
+  var passed = 0;
+  tests.forEach(function (t) {
+    console.log('--- ' + t.name + ' ---');
+    if (t()) passed++;
+  });
+  console.log(passed + '/' + tests.length + ' Phase 3 test functions passed.');
 }

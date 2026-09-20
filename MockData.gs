@@ -66,14 +66,19 @@ function ensureAllSheets() {
 }
 
 /**
- * Deletes all data rows (keeping headers) from every tab this system owns.
- * Used to make mock data regeneration idempotent — safe to re-run.
+ * Deletes all data rows (keeping headers) from every mock-data tab this
+ * system owns. Deliberately excludes Config: seedConfig() already upserts
+ * every value it manages (safe to re-run on its own), and Config also
+ * holds values no reseed ever restores — e.g. System.ReviewFormId, set
+ * once by ensureReviewForm() — clearing Config here previously caused a
+ * brand new Google Form to be created on every single test run instead of
+ * reusing the one that already exists.
  * @return {void}
  */
 function clearAllMockData() {
   [VENDOR_MASTER_SHEET, RESOURCE_MASTER_SHEET, CONTRACT_SOW_SHEET, INVOICES_SHEET,
     PERFORMANCE_SHEET, SAVINGS_SHEET, ACTION_LOG_SHEET, REVIEW_RESPONSES_SHEET,
-    CONFIG_SHEET, FAILURES_SHEET].forEach(clearSheetRows);
+    FAILURES_SHEET].forEach(clearSheetRows);
 }
 
 /**
@@ -84,6 +89,7 @@ function clearAllMockData() {
 function seedConfig() {
   setConfigValue('Thresholds', 'SOWExpiryWindowDays1', '30', 'First (more urgent) SOW expiry alert window');
   setConfigValue('Thresholds', 'SOWExpiryWindowDays2', '60', 'Second (earlier heads-up) SOW expiry alert window');
+  setConfigValue('Thresholds', 'LongTermDurationValue', 'Long-term (6+ months)', 'Must exactly match the review Form\'s "Expected Duration" long-term option text');
   setConfigValue('System', 'DryRunMode', 'true', 'When true, EmailService logs instead of sending — flip to false only after a demo is approved');
   setConfigValue('System', 'OwnerName', 'Akanksha', 'Recipient for vendor-level actions (contract expiry) — no per-vendor internal owner exists in the schema');
   setConfigValue('System', 'OwnerEmail', 'akanksha@example.com', 'Placeholder — replace with her real address before going live');
@@ -155,8 +161,14 @@ function generateMockData(today) {
   var vendors = getMockVendorDefs_();
   var dmEmails = ['priya.nair@example.com', 'rahul.verma@example.com', 'ananya.iyer@example.com', 'karan.mehta@example.com'];
 
+  var vendorRecords = [];
+  var contractRecords = [];
+  var invoiceRecords = [];
+  var performanceRecords = [];
+  var savingsRecords = [];
+
   vendors.forEach(function (v) {
-    createVendor({
+    vendorRecords.push({
       'Vendor ID': v.id, 'Vendor': v.name, 'Category': v.category, 'Type': v.type,
       'Skills': v.skills, 'Geography': v.geo, 'SPOC': v.spoc,
       'MSA Status': v.msa, 'SOW Status': v.sow, 'NDA': v.nda, 'Due Diligence': v.dd,
@@ -172,13 +184,13 @@ function generateMockData(today) {
     if (v.id === 'VND-006') sowExpiry = addDays_(today, 60);   // expiring in exactly 60 days
     if (v.id === 'VND-008') sowExpiry = addDays_(today, -15);  // already expired
     var contractIdBase = 'CTR-' + v.id.slice(-3);
-    createContract({
+    contractRecords.push({
       'Contract ID': contractIdBase + '-M', 'Vendor ID': v.id, 'Vendor': v.name,
       'Document Type': 'MSA', 'Document Status': v.msa, 'Effective Date': addMonths_(today, -14),
       'Expiry Date': msaExpiry, 'Commercial %': v.comm, 'Payment Terms': v.pay,
       'Conversion Terms': v.conv, 'Renewal Required': 'No', 'Key Clause / Note': 'Standard terms'
     });
-    createContract({
+    contractRecords.push({
       'Contract ID': contractIdBase + '-S', 'Vendor ID': v.id, 'Vendor': v.name,
       'Document Type': 'SOW', 'Document Status': v.sow, 'Effective Date': addMonths_(today, -8),
       'Expiry Date': sowExpiry, 'Commercial %': v.comm, 'Payment Terms': v.pay,
@@ -190,14 +202,14 @@ function generateMockData(today) {
     var mismatch = ['VND-002', 'VND-005', 'VND-009'].indexOf(v.id) !== -1;
     var actualPrev = expected;
     var actualCurr = mismatch ? expected + 35000 : expected;
-    createInvoice({
+    invoiceRecords.push({
       'Invoice ID': 'INV-' + formatYyyymm_(addMonths_(today, -1)) + '-' + v.id.slice(-3),
       'Vendor ID': v.id, 'Vendor': v.name, 'Invoice Month': addMonths_(today, -1),
       'Invoice Date': addMonths_(today, -1), 'Expected Amount': expected, 'Vendor Invoice Amount': actualPrev,
       'Variance': 0, 'Variance %': 0, 'Validation Status': 'Validated', 'Issue Type': '',
       'Action': 'No Action', 'Finance Submission': 'Ready'
     });
-    createInvoice({
+    invoiceRecords.push({
       'Invoice ID': 'INV-' + formatYyyymm_(today) + '-' + v.id.slice(-3),
       'Vendor ID': v.id, 'Vendor': v.name, 'Invoice Month': today, 'Invoice Date': today,
       'Expected Amount': expected, 'Vendor Invoice Amount': actualCurr,
@@ -210,7 +222,7 @@ function generateMockData(today) {
 
     // Performance: one row per vendor for the current period.
     var qualityScore = 60 + (parseInt(v.id.slice(-3), 10) * 3) % 35;
-    createPerformanceRecord({
+    performanceRecords.push({
       'Performance ID': 'PERF-' + v.id.slice(-3), 'Vendor ID': v.id, 'Vendor': v.name,
       'Review Period': 'FY2026 YTD', 'Requirements Received': 20 + qualityScore % 10,
       'Profiles Submitted': 30 + qualityScore % 15, 'Interviews': 10 + qualityScore % 8,
@@ -223,7 +235,7 @@ function generateMockData(today) {
 
     // Savings: one row per vendor.
     var savingsAmount = 50000 + (parseInt(v.id.slice(-3), 10) * 8000);
-    createSavingsRecord({
+    savingsRecords.push({
       'Savings ID': 'SAV-' + v.id.slice(-3), 'Vendor ID': v.id, 'Vendor': v.name,
       'Savings Type': parseInt(v.id.slice(-3), 10) % 2 === 0 ? 'Rate Negotiation' : 'Volume Discount',
       'Original Value': savingsAmount * 4, 'Savings': savingsAmount,
@@ -231,6 +243,12 @@ function generateMockData(today) {
       'Date': addDays_(today, -20), 'Owner': 'Vendor Management', 'Notes': 'Auto-generated mock savings entry'
     });
   });
+
+  createVendors(vendorRecords);
+  createContracts(contractRecords);
+  createInvoices(invoiceRecords);
+  createPerformanceRecords(performanceRecords);
+  createSavingsRecords(savingsRecords);
 
   generateMockResources_(today, vendors, dmEmails);
 }
@@ -308,7 +326,7 @@ function generateMockResources_(today, vendors, dmEmails) {
     });
   }
 
-  resources.forEach(function (r) {
+  var resourceRecords = resources.map(function (r) {
     var vendor = vendors[(r.idx - 1) % vendors.length];
     var resourceId = 'RES-' + ('0000' + r.idx).slice(-4);
     var monthsSinceDoj = Math.floor((today.getTime() - r.doj.getTime()) / (1000 * 60 * 60 * 24 * 30.4));
@@ -317,7 +335,7 @@ function generateMockResources_(today, vendors, dmEmails) {
     var client = r.filler !== undefined ? fillerClients[r.filler % fillerClients.length] : 'Client A';
     var status = r.filler !== undefined ? fillerStatuses[r.filler % fillerStatuses.length] : 'Active';
 
-    createResource({
+    return {
       'Resource ID': resourceId, 'Vendor ID': vendor.id, 'Vendor': vendor.name,
       'Candidate Name': 'Candidate ' + resourceId.slice(-4), 'Tm No.': 'TM-' + (1000 + r.idx),
       'Email ID': 'candidate' + r.idx + '@example.com', 'Service Type': vendor.type,
@@ -330,8 +348,10 @@ function generateMockResources_(today, vendors, dmEmails) {
       '9M Review Date': addMonths_(r.doj, 9), '9M Review Status': reviewStatus(monthsSinceDoj, 9),
       'Long-Term Dependency': '', 'Cross-Training Candidate': '', 'FTE Conversion Candidate': '',
       'Next Action / Due Date': ''
-    });
+    };
   });
+
+  createResources(resourceRecords);
 }
 
 /**
