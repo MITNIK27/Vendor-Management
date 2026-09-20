@@ -38,7 +38,13 @@ function sanitizeCellValue_(value) {
 /**
  * Gets the sheet with the given name, creating it (with the given header
  * row) if it does not exist yet. If the sheet exists but has no header row,
- * the header row is written. Existing headers are never overwritten.
+ * the header row is written. If the sheet has a header row that doesn't
+ * match the expected headers but has no data rows yet (safe — nothing to
+ * lose), the header row is rewritten to match, so a schema change picked
+ * up by code (e.g. a new column) doesn't silently get ignored on a sheet
+ * left over from before the change. A header mismatch on a sheet that
+ * already has data rows is left alone — that needs a deliberate migration,
+ * not a silent overwrite.
  * @param {string} sheetName
  * @param {Array<string>} headers
  * @return {Sheet}
@@ -52,6 +58,12 @@ function getOrCreateSheet(sheetName, headers) {
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
+  } else if (sheet.getLastRow() === 1) {
+    var currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (JSON.stringify(currentHeaders) !== JSON.stringify(headers)) {
+      sheet.getRange(1, 1, 1, sheet.getLastColumn()).clearContent();
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
   }
   return sheet;
 }

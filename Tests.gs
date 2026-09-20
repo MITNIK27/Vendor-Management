@@ -7,17 +7,6 @@
  */
 
 /**
- * Returns true if two Dates fall on the same calendar day (ignores time of
- * day), which is how milestone/expiry comparisons should be judged.
- * @param {Date} a
- * @param {Date} b
- * @return {boolean}
- */
-function sameDay_(a, b) {
-  return a instanceof Date && b instanceof Date && a.toDateString() === b.toDateString();
-}
-
-/**
  * Asserts a condition and logs PASS/FAIL with a message, returning whether
  * it passed.
  * @param {boolean} condition
@@ -73,8 +62,9 @@ function test_mockDataLoaded() {
 
 /**
  * Verifies RES-0001/0002/0003 hit their 3M/6M/9M milestone exactly today
- * and are marked Completed, using a fixed injected "today" so the test is
- * deterministic regardless of when it's run.
+ * and are marked Due (not yet Completed — that only happens once Phase 3's
+ * DM response closes it out), using a fixed injected "today" so the test
+ * is deterministic regardless of when it's run.
  * @return {boolean}
  */
 function test_milestoneDetectionFiresOnExactDay() {
@@ -91,7 +81,7 @@ function test_milestoneDetectionFiresOnExactDay() {
     allPass = assertTest_(r !== null, c.id + ' exists') && allPass;
     if (!r) return;
     allPass = assertTest_(sameDay_(r[c.dateCol], today), c.id + ' ' + c.dateCol + ' falls on today') && allPass;
-    allPass = assertTest_(r[c.statusCol] === 'Completed', c.id + ' ' + c.statusCol + ' is Completed') && allPass;
+    allPass = assertTest_(r[c.statusCol] === 'Due', c.id + ' ' + c.statusCol + ' is Due') && allPass;
   });
   return allPass;
 }
@@ -159,6 +149,124 @@ function test_invoiceMismatchesPresent() {
 }
 
 /**
+ * Verifies runDailyMonitoringScan creates actions for RES-0001/2/3 (today's
+ * milestones) but not for RES-0004 (tomorrow's).
+ * @return {boolean}
+ */
+function test_milestoneScanFiresOnlyOnExactDay() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  var allPass = true;
+  allPass = assertTest_(hasOpenAction('Resource ID', 'RES-0001', 'Review 3M'), 'RES-0001 got a Review 3M action today') && allPass;
+  allPass = assertTest_(hasOpenAction('Resource ID', 'RES-0002', 'Review 6M'), 'RES-0002 got a Review 6M action today') && allPass;
+  allPass = assertTest_(hasOpenAction('Resource ID', 'RES-0003', 'Review 9M'), 'RES-0003 got a Review 9M action today') && allPass;
+  allPass = assertTest_(!hasOpenAction('Resource ID', 'RES-0004', 'Review 3M'), 'RES-0004 got no action (milestone is tomorrow)') && allPass;
+  return allPass;
+}
+
+/**
+ * Verifies running the daily scan twice in a row does not create duplicate
+ * Action Log rows for the same resource/type — the core dedup guarantee
+ * CLAUDE.md requires (safe to re-run manually with no side effects).
+ * @return {boolean}
+ */
+function test_dedupPreventsDoubleAction() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  var countAfterFirstRun = findRecords(ACTION_LOG_SHEET, function (r) {
+    return r['Resource ID'] === 'RES-0001' && r.Type === 'Review 3M';
+  }).length;
+  runDailyMonitoringScan(today);
+  var countAfterSecondRun = findRecords(ACTION_LOG_SHEET, function (r) {
+    return r['Resource ID'] === 'RES-0001' && r.Type === 'Review 3M';
+  }).length;
+  var allPass = true;
+  allPass = assertTest_(countAfterFirstRun === 1, 'First scan creates exactly one Review 3M action for RES-0001') && allPass;
+  allPass = assertTest_(countAfterSecondRun === 1, 'Second scan does not create a duplicate') && allPass;
+  return allPass;
+}
+
+/**
+ * Verifies the resource-level SOW expiry buckets: RES-0005 (30 days out)
+ * lands in the urgent 30d bucket, RES-0006 (60 days out) in the heads-up
+ * 60d bucket, and RES-0007 (already expired) also in the 30d bucket since
+ * that bucket is "<=30 days remaining", which naturally includes negative
+ * (past) values.
+ * @return {boolean}
+ */
+function test_resourceSowExpiryThresholds() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  var allPass = true;
+  allPass = assertTest_(hasOpenAction('Resource ID', 'RES-0005', 'Resource SOW Expiry 30d'), 'RES-0005 (30 days out) got the 30d urgent action') && allPass;
+  allPass = assertTest_(hasOpenAction('Resource ID', 'RES-0006', 'Resource SOW Expiry 60d'), 'RES-0006 (60 days out) got the 60d heads-up action') && allPass;
+  allPass = assertTest_(hasOpenAction('Resource ID', 'RES-0007', 'Resource SOW Expiry 30d'), 'RES-0007 (already expired) got the 30d urgent action') && allPass;
+  return allPass;
+}
+
+/**
+ * Verifies the vendor-level Contracts & SOW expiry buckets mirror the
+ * resource-level ones: VND-002's SOW contract (30 days out) -> 30d urgent,
+ * VND-006's SOW contract (60 days out) -> 60d heads-up, VND-008's SOW
+ * contract (already expired) -> 30d urgent.
+ * @return {boolean}
+ */
+function test_vendorContractExpiryThresholds() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  runDailyMonitoringScan(today);
+  var allPass = true;
+  allPass = assertTest_(hasOpenAction('Vendor ID', 'VND-002', 'Vendor SOW Expiry 30d'), 'VND-002 (30 days out) got the 30d urgent action') && allPass;
+  allPass = assertTest_(hasOpenAction('Vendor ID', 'VND-006', 'Vendor SOW Expiry 60d'), 'VND-006 (60 days out) got the 60d heads-up action') && allPass;
+  allPass = assertTest_(hasOpenAction('Vendor ID', 'VND-008', 'Vendor SOW Expiry 30d'), 'VND-008 (already expired) got the 30d urgent action') && allPass;
+  return allPass;
+}
+
+/**
+ * Verifies RES-0008's missing Delivery Manager Email is handled as an
+ * expected, graceful condition: a Warning row lands in Failures and the
+ * scan completes without throwing (it still creates the Action Log entry
+ * so Akanksha doesn't lose the follow-up just because the email couldn't
+ * be sent).
+ * @return {boolean}
+ */
+function test_missingDmEmailLogsFailureNotCrash() {
+  var today = new Date();
+  setupPhase1WithDate_(today);
+  var result = runDailyMonitoringScan(today);
+  var allPass = true;
+  allPass = assertTest_(result.failed >= 0, 'Scan completed without throwing') && allPass;
+  var failureRows = findRecords(FAILURES_SHEET, function (r) { return r['Entity ID'] === 'RES-0008'; });
+  allPass = assertTest_(failureRows.length > 0, 'RES-0008 has a Failures row logged') && allPass;
+  if (failureRows.length > 0) {
+    allPass = assertTest_(failureRows[0].Severity === 'Warning', 'RES-0008\'s Failures row is Warning severity (expected/handled), not Error') && allPass;
+  }
+  return allPass;
+}
+
+/**
+ * Verifies dry-run mode's code path: with DryRunMode true (the seeded
+ * default), sendTemplatedEmail returns true via the logged-simulation
+ * branch without needing to call MailApp. This checks the dry-run branch
+ * runs cleanly — the guarantee that MailApp is never reached comes from
+ * the isDryRunMode() check in EmailService.gs itself, which is a
+ * code-reading guarantee, not something a test can independently observe.
+ * @return {boolean}
+ */
+function test_dryRunDoesNotActuallySend() {
+  setupPhase1WithDate_(new Date());
+  var sent = sendTemplatedEmail(
+    'someone@example.com', 'MilestoneReview',
+    { DMName: 'Test', CandidateName: 'Test Candidate', ResourceId: 'RES-TEST', Milestone: '3-month', ClientName: 'Client A', FormLink: 'http://example.com' },
+    'Dry-run test', 'RES-TEST'
+  );
+  return assertTest_(sent === true, 'sendTemplatedEmail returns true via the dry-run simulation path');
+}
+
+/**
  * Runs setupPhase1 with a given "today" without re-seeding Config every
  * time (seedConfig() is idempotent via setConfigValue's upsert, so this
  * just calls setupPhase1 directly). Wrapper kept separate so tests read
@@ -194,4 +302,28 @@ function runAllPhase1Tests() {
     if (t()) passed++;
   });
   console.log(passed + '/' + tests.length + ' Phase 1 test functions passed.');
+}
+
+/**
+ * Runs every Phase 2 test function and logs a pass/fail summary. Does NOT
+ * include ensureDailyTrigger's idempotency — that has a real side effect
+ * (installing a live recurring trigger on the account) and stays a manual,
+ * deliberate step, never exercised by an automated test run.
+ * @return {void}
+ */
+function runAllPhase2Tests() {
+  var tests = [
+    test_milestoneScanFiresOnlyOnExactDay,
+    test_dedupPreventsDoubleAction,
+    test_resourceSowExpiryThresholds,
+    test_vendorContractExpiryThresholds,
+    test_missingDmEmailLogsFailureNotCrash,
+    test_dryRunDoesNotActuallySend
+  ];
+  var passed = 0;
+  tests.forEach(function (t) {
+    console.log('--- ' + t.name + ' ---');
+    if (t()) passed++;
+  });
+  console.log(passed + '/' + tests.length + ' Phase 2 test functions passed.');
 }

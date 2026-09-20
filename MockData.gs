@@ -62,6 +62,7 @@ function ensureAllSheets() {
   getOrCreateSheet(REVIEW_RESPONSES_SHEET, REVIEW_RESPONSES_HEADERS);
   ensureConfigSheet();
   getOrCreateSheet(DASHBOARD_SHEET, DASHBOARD_HEADERS);
+  ensureFailuresSheet();
 }
 
 /**
@@ -72,7 +73,7 @@ function ensureAllSheets() {
 function clearAllMockData() {
   [VENDOR_MASTER_SHEET, RESOURCE_MASTER_SHEET, CONTRACT_SOW_SHEET, INVOICES_SHEET,
     PERFORMANCE_SHEET, SAVINGS_SHEET, ACTION_LOG_SHEET, REVIEW_RESPONSES_SHEET,
-    CONFIG_SHEET].forEach(clearSheetRows);
+    CONFIG_SHEET, FAILURES_SHEET].forEach(clearSheetRows);
 }
 
 /**
@@ -84,6 +85,8 @@ function seedConfig() {
   setConfigValue('Thresholds', 'SOWExpiryWindowDays1', '30', 'First (more urgent) SOW expiry alert window');
   setConfigValue('Thresholds', 'SOWExpiryWindowDays2', '60', 'Second (earlier heads-up) SOW expiry alert window');
   setConfigValue('System', 'DryRunMode', 'true', 'When true, EmailService logs instead of sending — flip to false only after a demo is approved');
+  setConfigValue('System', 'OwnerName', 'Akanksha', 'Recipient for vendor-level actions (contract expiry) — no per-vendor internal owner exists in the schema');
+  setConfigValue('System', 'OwnerEmail', 'akanksha@example.com', 'Placeholder — replace with her real address before going live');
 
   setConfigValue('DMDirectory', 'Priya Nair', 'priya.nair@example.com');
   setConfigValue('DMDirectory', 'Rahul Verma', 'rahul.verma@example.com');
@@ -96,6 +99,8 @@ function seedConfig() {
     'Hi {{DMName}},\n\n{{CandidateName}}\'s ({{ResourceId}}) SOW with {{VendorName}} expires on {{SowEndDate}}. Please confirm renewal/extension status.\n\nThanks,\nVendor Management System');
   setConfigValue('EmailTemplates', 'SendFailure',
     'Failed to send "{{TemplateName}}" for {{ResourceId}} to {{Recipient}}: {{ErrorMessage}}');
+  setConfigValue('EmailTemplates', 'VendorContractExpiry',
+    'Hi {{OwnerName}},\n\n{{VendorName}}\'s ({{VendorId}}) {{DocumentType}} expires on {{ExpiryDate}}. Please confirm renewal status.\n\nThanks,\nVendor Management System');
 
   setConfigValue('EnumVocab', 'Vendor Master.Category', 'Strategic,Preferred,Approved,Specialist');
   setConfigValue('EnumVocab', 'Vendor Master.Type', 'Subcon,FTE,RPO,CTH,IaaS');
@@ -251,8 +256,13 @@ function formatYyyymm_(date) {
  * @private
  */
 function generateMockResources_(today, vendors, dmEmails) {
+  // A milestone reaching or passing "today" is Due (awaiting a DM review),
+  // not Completed — Completed only happens once Phase 3's FormHandler closes
+  // it out via an actual DM response. Monitoring.gs's exact-day milestone
+  // detection depends on this: it skips resources already marked Completed
+  // so a same-day re-run doesn't refire after a real response came in.
   var reviewStatus = function (monthsSinceDoj, milestone) {
-    return monthsSinceDoj >= milestone ? 'Completed' : 'Not Due';
+    return monthsSinceDoj >= milestone ? 'Due' : 'Not Due';
   };
 
   var resources = [];
@@ -277,17 +287,23 @@ function generateMockResources_(today, vendors, dmEmails) {
   resources.push({ idx: 6, doj: addMonths_(today, -12), sowEnd: addDays_(today, 60), milestoneToday: null, dmEmail: dmEmails[2] });
   resources.push({ idx: 7, doj: addMonths_(today, -12), sowEnd: addDays_(today, -5), milestoneToday: null, dmEmail: dmEmails[3] });
 
-  // R8: missing Delivery Manager email — must not crash mock generation or Phase 2.
-  resources.push({ idx: 8, doj: addMonths_(today, -4), sowEnd: addMonths_(today, 8), milestoneToday: null, dmEmail: '' });
+  // R8: missing Delivery Manager email, AND hits its 3M milestone exactly
+  // today — must not crash mock generation, and must actually be reached
+  // by Phase 2's monitoring scan so the missing-email path is exercised
+  // for real, not just present-but-never-touched.
+  resources.push({ idx: 8, doj: addMonths_(today, -3), sowEnd: addMonths_(today, 8), milestoneToday: 3, dmEmail: '' });
 
-  // R9-R18: filler, varied DOJ/status, no edge case.
+  // R9-R18: filler, varied DOJ/status, no edge case. Offsets deliberately
+  // skip 3/6/9 months back so no filler resource accidentally lands on a
+  // milestone today too, which would muddy the designed edge cases above.
   var fillerDesignations = ['Java Developer', 'Python Developer', 'DevOps Engineer', 'QA Engineer', 'Business Analyst', 'React Developer', 'Data Engineer', 'Node.js Developer', 'ML Engineer', 'Automation Tester'];
   var fillerSkills = ['Java', 'Python', 'AWS', 'Selenium', 'Business Analysis', 'React', 'Data Engineering', 'Node.js', 'Machine Learning', 'Test Automation'];
   var fillerClients = ['Client A', 'Client B', 'Client C', 'Internal'];
   var fillerStatuses = ['Active', 'Active', 'Active', 'Released', 'Extended'];
+  var fillerMonthOffsets = [2, 4, 5, 7, 8, 10, 11, 13, 14, 16];
   for (var i = 0; i < 10; i++) {
     resources.push({
-      idx: 9 + i, doj: addMonths_(today, -(2 + i)), sowEnd: addMonths_(today, 4 + i), milestoneToday: null,
+      idx: 9 + i, doj: addMonths_(today, -fillerMonthOffsets[i]), sowEnd: addMonths_(today, 4 + i), milestoneToday: null,
       dmEmail: dmEmails[i % dmEmails.length], filler: i
     });
   }

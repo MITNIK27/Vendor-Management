@@ -113,6 +113,40 @@ function getEnumVocab(fieldPath) {
 }
 
 /**
+ * Reverse lookup: returns the Delivery Manager name whose DMDirectory
+ * entry matches the given email, or the email itself if no match is found
+ * (so callers always have something displayable in a template).
+ * @param {string} email
+ * @return {string}
+ */
+function getDeliveryManagerNameByEmail(email) {
+  if (!email) return '';
+  var entry = findRecord(CONFIG_SHEET, function (r) {
+    return r.Section === 'DMDirectory' && r.Value === email;
+  });
+  return entry ? entry.Key : email;
+}
+
+/**
+ * Returns the system owner's (Akanksha's) email address, used as the
+ * recipient for vendor-level actions that have no per-vendor internal
+ * owner in the schema. Returns null if not configured.
+ * @return {string|null}
+ */
+function getOwnerEmail() {
+  return getConfigValue('System', 'OwnerEmail');
+}
+
+/**
+ * Returns the system owner's (Akanksha's) display name. Returns null if
+ * not configured.
+ * @return {string|null}
+ */
+function getOwnerName() {
+  return getConfigValue('System', 'OwnerName');
+}
+
+/**
  * Returns true if EmailService should log emails instead of sending them
  * (dry-run mode), per the "System.DryRunMode" Config entry. Defaults to
  * true (safe) if not set.
